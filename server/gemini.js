@@ -1,5 +1,5 @@
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-flash-latest";
 
 export async function planConcernWithGemini({ concern, category, signal }) {
   const apiKey = process.env.GEMINI_API_KEY;
