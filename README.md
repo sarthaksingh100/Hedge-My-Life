@@ -10,6 +10,12 @@ Live deployment: https://whale-app-w5awy.ondigitalocean.app/
 
 Health check: https://whale-app-w5awy.ondigitalocean.app/api/health
 
+## Screenshots
+
+![Hedge My Life homepage](https://github.com/user-attachments/assets/64b4c6bd-23ff-4af5-b8cc-8a3459be1bfb)
+
+![Hedge My Life results](https://github.com/user-attachments/assets/31b05c34-dd2a-45dd-946d-288e2bdfd6a0)
+
 ## Features
 
 - React + Vite frontend with a simple concern input and hedge math view.
