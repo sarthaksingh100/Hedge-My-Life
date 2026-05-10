@@ -6,6 +6,10 @@ Instead of showing a trading dashboard, the app asks: "What are you worried abou
 
 This is not financial advice. It is a prototype for explaining how prediction markets could act like informal insurance for small, specific worries.
 
+Live deployment: https://whale-app-w5awy.ondigitalocean.app/
+
+Health check: https://whale-app-w5awy.ondigitalocean.app/api/health
+
 ## Features
 
 - React + Vite frontend with a simple concern input and hedge math view.
