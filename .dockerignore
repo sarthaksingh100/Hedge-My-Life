@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.git
+.gitignore
+npm-debug.log
+server.dev.out.log
+server.dev.err.log
+api-runtime.log
+api-runtime.err.log

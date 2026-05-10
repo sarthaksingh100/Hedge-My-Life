@@ -1,7 +1,7 @@
 const DEFAULT_BASE_URL = "https://api.anakin.io/v1";
 const ODDSPIPE_BASE_URL = "https://oddspipe.com/v1";
 
-export async function findLiveMarkets({ query, queries, category, signal }) {
+export async function findLiveMarkets({ query, queries, oddspipeQueries, category, signal }) {
   const apiKey = process.env.ANAKIN_API_KEY;
   const oddspipeApiKey = process.env.ODDSPIPE_API_KEY;
   const useLive = process.env.ANAKIN_USE_LIVE === "true";
@@ -12,8 +12,10 @@ export async function findLiveMarkets({ query, queries, category, signal }) {
 
   const baseUrl = process.env.ANAKIN_BASE_URL || DEFAULT_BASE_URL;
   const searchQueries = normalizeQueries(queries?.length ? queries : [query]);
+  const oddspipeSearchQueries = normalizeQueries(oddspipeQueries?.length ? oddspipeQueries : searchQueries);
   const markets = [];
   const errors = [];
+  const providerHits = new Set();
 
   for (const [queryIndex, searchQuery] of searchQueries.entries()) {
     const focusedQuery = buildSearchQuery(searchQuery, category);
@@ -28,11 +30,15 @@ export async function findLiveMarkets({ query, queries, category, signal }) {
           signal
         });
         const candidates = polymarketCandidateMarkets(searchData, focusedQuery, category).slice(0, 6);
-        markets.push(...normalizePolymarketSearchCandidates(candidates, focusedQuery, category));
+        const searchMarkets = normalizePolymarketSearchCandidates(candidates, focusedQuery, category);
+        markets.push(...searchMarkets);
+        if (searchMarkets.length) providerHits.add("Polymarket");
 
         const details = await fetchPolymarketDetails({ apiKey, baseUrl, candidates: candidates.slice(0, 3), signal });
         for (const detail of details) {
-          markets.push(...normalizePolymarketDetail(detail, focusedQuery, category));
+          const detailMarkets = normalizePolymarketDetail(detail, focusedQuery, category);
+          markets.push(...detailMarkets);
+          if (detailMarkets.length) providerHits.add("Polymarket");
         }
       } catch (error) {
         errors.push(`pm_search_markets: ${error.message}`);
@@ -49,7 +55,9 @@ export async function findLiveMarkets({ query, queries, category, signal }) {
         const events = robinhoodCandidateEvents(searchData, focusedQuery, category).slice(0, 3);
         const details = await fetchRobinhoodEventDetails({ apiKey, baseUrl, events, signal });
         for (const detail of details) {
-          markets.push(...normalizeRobinhoodEventDetail(detail, focusedQuery, category));
+          const robinhoodMarkets = normalizeRobinhoodEventDetail(detail, focusedQuery, category);
+          markets.push(...robinhoodMarkets);
+          if (robinhoodMarkets.length) providerHits.add("Robinhood");
         }
       } catch (error) {
         errors.push(`rh_get_markets: ${error.message}`);
@@ -69,21 +77,28 @@ export async function findLiveMarkets({ query, queries, category, signal }) {
             },
             signal
           });
-          markets.push(...normalizeKalshiEvents(kalshiData, focusedQuery, category));
+          const kalshiMarkets = normalizeKalshiEvents(kalshiData, focusedQuery, category);
+          markets.push(...kalshiMarkets);
+          if (kalshiMarkets.length) providerHits.add("Kalshi");
         } catch (error) {
           errors.push(`kl_events: ${error.message}`);
         }
       }
     }
+  }
 
-    if (oddspipeApiKey) {
+  if (oddspipeApiKey) {
+    for (const searchQuery of oddspipeSearchQueries) {
+      const focusedQuery = buildSearchQuery(searchQuery, category);
       try {
         const oddspipeData = await fetchOddspipeMarkets({
           apiKey: oddspipeApiKey,
           query: focusedQuery,
           signal
         });
-        markets.push(...normalizeOddspipeMarkets(oddspipeData, focusedQuery, category));
+        const oddspipeMarkets = normalizeOddspipeMarkets(oddspipeData, focusedQuery, category);
+        markets.push(...oddspipeMarkets);
+        for (const market of oddspipeMarkets) providerHits.add(market.platform);
       } catch (error) {
         errors.push(`oddspipe_search: ${error.message}`);
       }
@@ -91,16 +106,23 @@ export async function findLiveMarkets({ query, queries, category, signal }) {
   }
 
   const uniqueMarkets = dedupeMarkets(markets).slice(0, 12);
+  const visibleErrors = errors.filter((error) => !isProviderCreditError(error));
+  const source = uniqueMarkets.length ? "live" : "none";
+  const providers = [...providerHits].join(", ");
 
   return {
-    source: uniqueMarkets.length ? "anakin" : "none",
+    source,
     markets: uniqueMarkets,
     reason: uniqueMarkets.length
-      ? "Live markets returned from Kalshi, Polymarket, Robinhood, or Oddspipe."
+      ? `Live markets returned from ${providers || "available providers"}.`
       : `No real Kalshi, Polymarket, Robinhood, or Oddspipe market matched these searches: ${searchQueries.join(", ")}.${
-          errors.length ? ` Errors: ${errors.slice(0, 2).join(" | ")}` : ""
+          visibleErrors.length ? ` Errors: ${visibleErrors.slice(0, 2).join(" | ")}` : ""
         }`
   };
+}
+
+function isProviderCreditError(error) {
+  return /current balance:\s*0|need\s+\d+\s+credits?/i.test(String(error || ""));
 }
 
 async function fetchOddspipeMarkets({ apiKey, query, signal }) {
@@ -390,7 +412,8 @@ function normalizeOddspipeMarkets(data, query, category) {
     .map((item) => {
       const price = parsePrice(item.source?.latest_price?.yes_price);
       const title = item.title;
-      const description = `Oddspipe ${titleCase(item.source?.platform || "market")} search result.`;
+      const platform = titleCase(item.source?.platform || "Market");
+      const description = `Indexed market result from ${platform}.`;
 
       if (String(item.status || "").toLowerCase() !== "active") return null;
       if (!item.source?.url) return null;
@@ -398,7 +421,7 @@ function normalizeOddspipeMarkets(data, query, category) {
 
       return {
         id: `op-${item.id || slugify(title)}`,
-        platform: "Oddspipe",
+        platform,
         sourceType: "search",
         title,
         description,

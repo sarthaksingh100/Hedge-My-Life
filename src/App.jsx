@@ -1,7 +1,10 @@
 import React, { useMemo, useState } from "react";
 import {
   BookIcon,
+  CarIcon,
   ClockIcon,
+  PlaneIcon,
+  ReceiptIcon,
   SearchIcon,
   ShieldIcon,
   SlidersIcon,
@@ -9,16 +12,32 @@ import {
 } from "./icons.jsx";
 
 const defaultMarkets = [];
+const apiBaseUrl = window.location.port === "5173" || window.location.port === "5174" ? "http://127.0.0.1:8787" : "";
+const exampleConcerns = [
+  "How will my trip to New York be between May 20-21?",
+  "Will gas prices make my commute more expensive this week?",
+  "Will there be at least 3000 measles cases in the U.S. in 2026?"
+];
+const loadingSteps = [
+  "Understanding your concern",
+  "Building provider search queries",
+  "Scanning live markets",
+  "Filtering noisy matches",
+  "Calculating hedge math"
+];
 
 export default function App() {
-  const [concern, setConcern] = useState("Heavy rain in Cancun from May 20-24 that ruins our beach vacation.");
+  const [concern, setConcern] = useState("");
   const [badOutcomeCost, setBadOutcomeCost] = useState(2000);
   const [markets, setMarkets] = useState(defaultMarkets);
   const [selectedId, setSelectedId] = useState(defaultMarkets[0]?.id);
   const [source, setSource] = useState("none");
-  const [sourceMessage, setSourceMessage] = useState("Ready to search real Kalshi, Polymarket, and Robinhood markets.");
+  const [sourceMessage, setSourceMessage] = useState("Ready to search real Kalshi, Polymarket, Robinhood, and Oddspipe markets.");
   const [suggestedBets, setSuggestedBets] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [hasStarted, setHasStarted] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingStep, setLoadingStep] = useState(loadingSteps[0]);
 
   const selectedMarket = useMemo(
     () => markets.find((market) => market.id === selectedId) || markets[0],
@@ -26,11 +45,17 @@ export default function App() {
   );
 
   async function findHedges() {
+    if (!concern.trim()) return;
+
+    setHasStarted(true);
     setIsLoading(true);
-    setSourceMessage("Scanning Kalshi, Polymarket, and Robinhood actions through the Node API...");
+    setLoadingProgress(8);
+    setLoadingStep(loadingSteps[0]);
+    setSourceMessage("Scanning Kalshi, Polymarket, Robinhood, and Oddspipe through the Node API...");
+    const progressTimer = startProgress(setLoadingProgress, setLoadingStep);
 
     try {
-      const response = await fetch("http://127.0.0.1:8787/api/hedges", {
+      const response = await fetch(`${apiBaseUrl}/api/hedges`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ concern, badOutcomeCost })
@@ -43,21 +68,26 @@ export default function App() {
       setSuggestedBets(payload.suggestedBets || []);
       setSource(payload.source);
       setSourceMessage(payload.sourceMessage);
+      setLoadingProgress(100);
+      setLoadingStep("Ready");
     } catch (error) {
       setSource("offline");
       setSourceMessage(`${error.message}. Start the Node server with npm run server.`);
       setSuggestedBets([]);
     } finally {
+      clearInterval(progressTimer);
       setIsLoading(false);
     }
   }
 
   return (
     <main className="app-shell">
-      <Header source={source} />
+      <Header source={source} onHome={() => setHasStarted(false)} />
 
-      <section className="workspace">
-        <ConcernPanel
+      {isLoading ? (
+        <LoadingPage progress={loadingProgress} step={loadingStep} concern={concern} />
+      ) : !hasStarted ? (
+        <HomePage
           concern={concern}
           setConcern={setConcern}
           badOutcomeCost={badOutcomeCost}
@@ -65,30 +95,87 @@ export default function App() {
           isLoading={isLoading}
           onFind={findHedges}
         />
-        <MarketsPanel
-          markets={markets}
-          selectedId={selectedId}
-          setSelectedId={setSelectedId}
-          sourceMessage={sourceMessage}
-          suggestedBets={suggestedBets}
-          isLoading={isLoading}
-        />
-      </section>
+      ) : (
+        <>
+          <section className="workspace">
+            <ConcernPanel
+              concern={concern}
+              setConcern={setConcern}
+              badOutcomeCost={badOutcomeCost}
+              setBadOutcomeCost={setBadOutcomeCost}
+              isLoading={isLoading}
+              onFind={findHedges}
+            />
+            <MarketsPanel
+              markets={markets}
+              selectedId={selectedId}
+              setSelectedId={setSelectedId}
+              sourceMessage={sourceMessage}
+              suggestedBets={suggestedBets}
+              isLoading={isLoading}
+            />
+          </section>
 
-      <HedgeMath market={selectedMarket} badOutcomeCost={badOutcomeCost} />
+          <HedgeMath market={selectedMarket} badOutcomeCost={badOutcomeCost} />
+        </>
+      )}
     </main>
   );
 }
 
-function Header({ source }) {
-  const isLive = source === "anakin";
+function startProgress(setLoadingProgress, setLoadingStep) {
+  return setInterval(() => {
+    setLoadingProgress((current) => {
+      const next = Math.min(92, current + Math.max(2, Math.round((100 - current) * 0.14)));
+      const stepIndex = Math.min(loadingSteps.length - 1, Math.floor((next / 100) * loadingSteps.length));
+      setLoadingStep(loadingSteps[stepIndex]);
+      return next;
+    });
+  }, 900);
+}
+
+function LoadingPage({ progress, step, concern }) {
+  return (
+    <section className="loading-page" aria-live="polite" aria-busy="true">
+      <div className="loading-card">
+        <div className="loading-mark">
+          <UmbrellaIcon />
+        </div>
+        <h1>Finding your hedge</h1>
+        <p>{concern}</p>
+        <div className="progress-shell" aria-label={`${progress}% complete`}>
+          <div className="progress-bar" style={{ width: `${progress}%` }} />
+        </div>
+        <div className="progress-meta">
+          <span>{step}</span>
+          <strong>{progress}%</strong>
+        </div>
+        <div className="loading-steps">
+          {loadingSteps.map((item, index) => {
+            const isDone = progress >= ((index + 1) / loadingSteps.length) * 100 || step === "Ready";
+            const isCurrent = item === step;
+            return (
+              <div className={isDone ? "done" : isCurrent ? "current" : ""} key={item}>
+                <span>{isDone ? "✓" : index + 1}</span>
+                <p>{item}</p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Header({ source, onHome }) {
+  const isLive = source === "anakin" || source === "live" || source === "oddspipe";
 
   return (
     <header className="topbar">
-      <div className="brand">
+      <button className="brand brand-button" type="button" onClick={onHome} aria-label="Go to homepage">
         <span className="brand-mark"><UmbrellaIcon /></span>
         <span>Hedge My Life</span>
-      </div>
+      </button>
       <div className="market-status">
         <span className={isLive ? "dot online" : "dot"} />
         {isLive ? "Live market matches" : "No live matches yet"}
@@ -98,6 +185,84 @@ function Header({ source }) {
         <a href="#recent"><ClockIcon /> Recent hedges</a>
       </nav>
     </header>
+  );
+}
+
+function HomePage({ concern, setConcern, badOutcomeCost, setBadOutcomeCost, isLoading, onFind }) {
+  return (
+    <section className="home">
+      <div className="home-copy">
+        <h1>Hedge everyday worries with live prediction markets.</h1>
+        <p>
+          Describe a trip, commute, bill, grocery risk, or public event. Hedge My Life searches real
+          markets and turns the best matches into plain-English hedge math.
+        </p>
+        <div className="provider-line" aria-label="Data providers">
+          <span>Kalshi</span>
+          <span>Polymarket</span>
+          <span>Robinhood</span>
+          <span>Oddspipe</span>
+          <span>Gemini planning</span>
+        </div>
+      </div>
+
+      <div className="home-search" aria-label="Start a hedge search">
+        <label htmlFor="home-concern">What are you worried about?</label>
+        <textarea
+          id="home-concern"
+          value={concern}
+          onChange={(event) => setConcern(event.target.value)}
+          placeholder="Example: How will my trip be between May 20-21?"
+          maxLength={500}
+        />
+        <div className="home-controls">
+          <label htmlFor="home-cost">Bad outcome cost</label>
+          <strong>{formatCurrency(badOutcomeCost)}</strong>
+          <input
+            id="home-cost"
+            type="range"
+            min="500"
+            max="10000"
+            step="100"
+            value={badOutcomeCost}
+            onChange={(event) => setBadOutcomeCost(Number(event.target.value))}
+          />
+        </div>
+        <button className="primary-action hero-action" onClick={onFind} type="button" disabled={isLoading || !concern.trim()}>
+          <SearchIcon /> {isLoading ? "Finding hedges" : "Find my hedge"}
+        </button>
+        <div className="examples" aria-label="Example concerns">
+          {exampleConcerns.map((example) => (
+            <button key={example} type="button" onClick={() => setConcern(example)}>
+              {example}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="risk-map" aria-hidden="true">
+        <div className="risk-map-head">
+          <span><UmbrellaIcon /></span>
+          <strong>AI risk map</strong>
+        </div>
+        <RiskItem icon={<PlaneIcon />} title="Travel disruption" text="Airport delays, cancellations, lodging spikes" />
+        <RiskItem icon={<UmbrellaIcon />} title="Weather exposure" text="Rain, temperature, storms, air quality" />
+        <RiskItem icon={<CarIcon />} title="Commute costs" text="Gas prices, rideshare surge, local transit" />
+        <RiskItem icon={<ReceiptIcon />} title="Household prices" text="Inflation, energy costs, grocery pressure" />
+      </div>
+    </section>
+  );
+}
+
+function RiskItem({ icon, title, text }) {
+  return (
+    <div className="risk-item">
+      <span>{icon}</span>
+      <div>
+        <strong>{title}</strong>
+        <p>{text}</p>
+      </div>
+    </div>
   );
 }
 
@@ -191,9 +356,9 @@ function MarketsPanel({ markets, selectedId, setSelectedId, sourceMessage, sugge
             <tbody>
               {markets.length === 0 ? (
                 <tr>
-                  <td className="empty-cell" colSpan="8">
-                    No real Kalshi, Polymarket, or Robinhood markets matched this concern. Gemini ideas appear separately as markets someone could create.
-                  </td>
+                <td className="empty-cell" colSpan="8">
+                    No real Kalshi, Polymarket, Robinhood, or Oddspipe markets matched this concern. Gemini ideas appear separately as markets someone could create.
+                </td>
                 </tr>
               ) : markets.map((market) => (
                 <tr
