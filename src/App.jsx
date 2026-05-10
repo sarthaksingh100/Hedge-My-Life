@@ -14,7 +14,7 @@ import {
 const defaultMarkets = [];
 const apiBaseUrl = window.location.port === "5173" || window.location.port === "5174" ? "http://127.0.0.1:8787" : "";
 const exampleConcerns = [
-  "How will my trip to New York be between May 20-21?",
+  "Will the U.S. create a national Bitcoin reserve?",
   "Will gas prices make my commute more expensive this week?",
   "Will there be at least 3000 measles cases in the U.S. in 2026?"
 ];
