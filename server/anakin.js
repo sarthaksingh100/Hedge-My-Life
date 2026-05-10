@@ -1,11 +1,13 @@
 const DEFAULT_BASE_URL = "https://api.anakin.io/v1";
+const ODDSPIPE_BASE_URL = "https://oddspipe.com/v1";
 
 export async function findLiveMarkets({ query, queries, category, signal }) {
   const apiKey = process.env.ANAKIN_API_KEY;
+  const oddspipeApiKey = process.env.ODDSPIPE_API_KEY;
   const useLive = process.env.ANAKIN_USE_LIVE === "true";
 
-  if (!apiKey || !useLive) {
-    return { source: "none", markets: [], reason: "Live Anakin Wire is disabled or ANAKIN_API_KEY is missing." };
+  if ((!apiKey || !useLive) && !oddspipeApiKey) {
+    return { source: "none", markets: [], reason: "Live provider keys are missing or disabled." };
   }
 
   const baseUrl = process.env.ANAKIN_BASE_URL || DEFAULT_BASE_URL;
@@ -16,59 +18,74 @@ export async function findLiveMarkets({ query, queries, category, signal }) {
   for (const [queryIndex, searchQuery] of searchQueries.entries()) {
     const focusedQuery = buildSearchQuery(searchQuery, category);
 
-    try {
-      const searchData = await executeWireTask({
-        apiKey,
-        baseUrl,
-        actionId: "pm_search_markets",
-        params: { query: focusedQuery, limit: 10, closed: false },
-        signal
-      });
-      const candidates = polymarketCandidateMarkets(searchData, focusedQuery, category).slice(0, 6);
-      markets.push(...normalizePolymarketSearchCandidates(candidates, focusedQuery, category));
-
-      const details = await fetchPolymarketDetails({ apiKey, baseUrl, candidates: candidates.slice(0, 3), signal });
-      for (const detail of details) {
-        markets.push(...normalizePolymarketDetail(detail, focusedQuery, category));
-      }
-    } catch (error) {
-      errors.push(`pm_search_markets: ${error.message}`);
-    }
-
-    try {
-      const searchData = await executeWireTask({
-        apiKey,
-        baseUrl,
-        actionId: "rh_get_markets",
-        params: { search: focusedQuery, limit: 20, live_only: true },
-        signal
-      });
-      const events = robinhoodCandidateEvents(searchData, focusedQuery, category).slice(0, 3);
-      const details = await fetchRobinhoodEventDetails({ apiKey, baseUrl, events, signal });
-      for (const detail of details) {
-        markets.push(...normalizeRobinhoodEventDetail(detail, focusedQuery, category));
-      }
-    } catch (error) {
-      errors.push(`rh_get_markets: ${error.message}`);
-    }
-
-    if (queryIndex === 0) {
+    if (apiKey && useLive) {
       try {
-        const kalshiData = await executeWireTask({
+        const searchData = await executeWireTask({
           apiKey,
           baseUrl,
-          actionId: "kl_events",
-          params: {
-            limit: 200,
-            status: "open",
-            with_nested_markets: true,
-            min_close_ts: Math.floor(Date.now() / 1000)
-          },
+          actionId: "pm_search_markets",
+          params: { query: focusedQuery, limit: 10, closed: false },
           signal
         });
-        markets.push(...normalizeKalshiEvents(kalshiData, focusedQuery, category));
+        const candidates = polymarketCandidateMarkets(searchData, focusedQuery, category).slice(0, 6);
+        markets.push(...normalizePolymarketSearchCandidates(candidates, focusedQuery, category));
+
+        const details = await fetchPolymarketDetails({ apiKey, baseUrl, candidates: candidates.slice(0, 3), signal });
+        for (const detail of details) {
+          markets.push(...normalizePolymarketDetail(detail, focusedQuery, category));
+        }
       } catch (error) {
-        errors.push(`kl_events: ${error.message}`);
+        errors.push(`pm_search_markets: ${error.message}`);
+      }
+
+      try {
+        const searchData = await executeWireTask({
+          apiKey,
+          baseUrl,
+          actionId: "rh_get_markets",
+          params: { search: focusedQuery, limit: 20, live_only: true },
+          signal
+        });
+        const events = robinhoodCandidateEvents(searchData, focusedQuery, category).slice(0, 3);
+        const details = await fetchRobinhoodEventDetails({ apiKey, baseUrl, events, signal });
+        for (const detail of details) {
+          markets.push(...normalizeRobinhoodEventDetail(detail, focusedQuery, category));
+        }
+      } catch (error) {
+        errors.push(`rh_get_markets: ${error.message}`);
+      }
+
+      if (queryIndex === 0) {
+        try {
+          const kalshiData = await executeWireTask({
+            apiKey,
+            baseUrl,
+            actionId: "kl_events",
+            params: {
+              limit: 200,
+              status: "open",
+              with_nested_markets: true,
+              min_close_ts: Math.floor(Date.now() / 1000)
+            },
+            signal
+          });
+          markets.push(...normalizeKalshiEvents(kalshiData, focusedQuery, category));
+        } catch (error) {
+          errors.push(`kl_events: ${error.message}`);
+        }
+      }
+    }
+
+    if (oddspipeApiKey) {
+      try {
+        const oddspipeData = await fetchOddspipeMarkets({
+          apiKey: oddspipeApiKey,
+          query: focusedQuery,
+          signal
+        });
+        markets.push(...normalizeOddspipeMarkets(oddspipeData, focusedQuery, category));
+      } catch (error) {
+        errors.push(`oddspipe_search: ${error.message}`);
       }
     }
   }
@@ -79,11 +96,27 @@ export async function findLiveMarkets({ query, queries, category, signal }) {
     source: uniqueMarkets.length ? "anakin" : "none",
     markets: uniqueMarkets,
     reason: uniqueMarkets.length
-      ? "Live Kalshi, Polymarket, or Robinhood markets returned through Anakin Wire."
-      : `No real Kalshi, Polymarket, or Robinhood market matched these searches: ${searchQueries.join(", ")}.${
+      ? "Live markets returned from Kalshi, Polymarket, Robinhood, or Oddspipe."
+      : `No real Kalshi, Polymarket, Robinhood, or Oddspipe market matched these searches: ${searchQueries.join(", ")}.${
           errors.length ? ` Errors: ${errors.slice(0, 2).join(" | ")}` : ""
         }`
   };
+}
+
+async function fetchOddspipeMarkets({ apiKey, query, signal }) {
+  const url = new URL(`${ODDSPIPE_BASE_URL}/markets/search`);
+  url.searchParams.set("q", query);
+  url.searchParams.set("limit", "20");
+
+  const response = await fetch(url, {
+    headers: { "X-API-Key": apiKey },
+    signal
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error?.message || payload.message || `Oddspipe search failed (${response.status})`);
+  }
+  return payload;
 }
 
 async function fetchPolymarketDetails({ apiKey, baseUrl, candidates, signal }) {
@@ -350,6 +383,36 @@ function normalizeKalshiEvents(data, query, category) {
   return normalized;
 }
 
+function normalizeOddspipeMarkets(data, query, category) {
+  const items = Array.isArray(data?.items) ? data.items : [];
+
+  return items
+    .map((item) => {
+      const price = parsePrice(item.source?.latest_price?.yes_price);
+      const title = item.title;
+      const description = `Oddspipe ${titleCase(item.source?.platform || "market")} search result.`;
+
+      if (String(item.status || "").toLowerCase() !== "active") return null;
+      if (!item.source?.url) return null;
+      if (!isUsableMarket({ title, description, price, row: item, query, category })) return null;
+
+      return {
+        id: `op-${item.id || slugify(title)}`,
+        platform: "Oddspipe",
+        sourceType: "search",
+        title,
+        description,
+        eventDate: formatDate(item.source?.latest_price?.snapshot_at || item.created_at),
+        yesPrice: price,
+        probability: price,
+        volume: formatVolume(item.source?.latest_price?.volume_usd),
+        category: item.category || category || "Market",
+        url: item.source.url
+      };
+    })
+    .filter(Boolean);
+}
+
 function isUsableMarket({ title, description, price, row, query, category }) {
   if (!title || String(title).length > 180) return false;
   if (!Number.isFinite(price) || price < 0.03 || price > 0.97) return false;
@@ -382,9 +445,9 @@ function buildSearchQuery(query, category) {
 }
 
 function relevanceScore(text, query, category) {
-  const normalizedText = normalizeText(text);
+  const words = normalizedWords(text);
   const tokens = importantTokens(query);
-  let score = tokens.reduce((total, token) => total + (normalizedText.includes(token) ? 1 : 0), 0);
+  let score = tokens.reduce((total, token) => total + (words.has(token) ? 1 : 0), 0);
 
   const categoryTerms = {
     Weather: ["weather", "rain", "precipitation", "temperature", "storm", "snow", "hurricane"],
@@ -395,15 +458,15 @@ function relevanceScore(text, query, category) {
   };
 
   for (const term of categoryTerms[category] || []) {
-    if (normalizedText.includes(term)) score += 1;
+    if (words.has(term)) score += 1;
   }
 
   return score;
 }
 
 function directTokenMatches(text, query) {
-  const normalizedText = normalizeText(text);
-  return importantTokens(query).filter((token) => normalizedText.includes(token)).length;
+  const words = normalizedWords(text);
+  return importantTokens(query).filter((token) => words.has(token)).length;
 }
 
 function importantTokens(query) {
@@ -468,6 +531,10 @@ function normalizeText(value) {
     .trim();
 }
 
+function normalizedWords(value) {
+  return new Set(normalizeText(value).split(" ").filter(Boolean));
+}
+
 function cleanDescription(value) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   return text.length > 150 ? `${text.slice(0, 147)}...` : text;
@@ -529,6 +596,14 @@ function parsePrice(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return NaN;
   return numeric > 1 ? numeric / 100 : numeric;
+}
+
+function titleCase(value) {
+  return String(value || "")
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((word) => `${word.slice(0, 1).toUpperCase()}${word.slice(1).toLowerCase()}`)
+    .join(" ");
 }
 
 function slugify(value) {

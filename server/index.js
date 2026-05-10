@@ -16,7 +16,8 @@ app.get("/api/health", (_req, res) => {
     ok: true,
     anakinConfigured: Boolean(process.env.ANAKIN_API_KEY),
     liveEnabled: process.env.ANAKIN_USE_LIVE === "true",
-    geminiConfigured: Boolean(process.env.GEMINI_API_KEY)
+    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+    oddspipeConfigured: Boolean(process.env.ODDSPIPE_API_KEY)
   });
 });
 
@@ -76,7 +77,7 @@ async function handleHedgeRequest(input, res) {
     console.log(`[HEDGE] Step 2: Built ${searchQueries.length} search queries`);
     console.log(`[HEDGE]   Queries: ${searchQueries.map(q => `"${q}"`).join(", ")}`);
 
-    console.log(`[HEDGE] Step 3: Calling Anakin Wire for live markets...`);
+    console.log("[HEDGE] Step 3: Calling live market providers...");
     const live = await findLiveMarkets({
       query: searchQueries[0],
       queries: searchQueries,
@@ -135,8 +136,9 @@ const server = app.listen(port, () => {
   console.log("\nAPI Configuration:");
   console.log(`   - ANAKIN live markets: ${process.env.ANAKIN_USE_LIVE === "true" ? "ENABLED" : "DISABLED"}`);
   console.log(`   - ANAKIN API key: ${process.env.ANAKIN_API_KEY ? "SET" : "MISSING"}`);
+  console.log(`   - Oddspipe API key: ${process.env.ODDSPIPE_API_KEY ? "SET" : "MISSING"}`);
   console.log(`   - Gemini query planner: ${process.env.GEMINI_API_KEY ? "ENABLED" : "DISABLED"}`);
-  console.log("\nReady to return real markets from Kalshi, Polymarket, and Robinhood.\n");
+  console.log("\nReady to return real markets from Kalshi, Polymarket, Robinhood, and Oddspipe.\n");
 });
 
 server.on("error", (error) => {
